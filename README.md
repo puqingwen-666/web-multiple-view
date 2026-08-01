@@ -133,6 +133,6 @@ iframe 会吞掉普通的 `mouseup` 事件，导致拖动停不下来。本应�
 
 ## 已知限制
 
-1. **部分网站无法嵌入**：Google、GitHub 等站点通过 `X-Frame-Options` / `Content-Security-Policy` 拦截 iframe 嵌入，控制台会报 `Refused to display in a frame` 错误。这是站点策略，不是代码问题。可嵌入的站点示例：MDN、Wikipedia、Bing、自建内部工具等。
+1. **部分网站无法嵌入**：Google、GitHub 等站点通过 `X-Frame-Options` / `Content-Security-Policy` 拦截 iframe 嵌入，控制台会报 `Refused to display in a frame` 错误。这是站点策略，不是代码问题。可嵌入的站点示例：MDN、Wikipedia、Bing、自建内部工具等。可以使用浏览器插件（Disable-CSP类似的插件临时关闭同源策略）。
 2. **主窗口 URL 持久化**：主窗口加载过的 URL 保存在 `localStorage`，刷新后自动恢复；右侧小窗口不持久化，刷新后清空。
 3. **沙箱限制**：iframe 加了 `sandbox` 属性，限制部分权限（如同源脚本访问），如某些网站功能异常可调整 sandbox 配置。

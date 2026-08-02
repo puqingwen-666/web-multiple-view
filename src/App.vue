@@ -1,8 +1,17 @@
 <script setup>
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import MainWindow from './components/MainWindow.vue'
 import RightPanel from './components/RightPanel.vue'
 import EmbeddedWindow from './components/EmbeddedWindow.vue'
+import FabTree from './components/FabTree.vue'
+
+const MOBILE_BREAKPOINT = 768
+
+const isMobile = ref(false)
+
+function updateBreakpoint() {
+  isMobile.value = typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT
+}
 
 const PRESETS = [
   { title: 'Google', url: 'https://www.google.com' },
@@ -168,59 +177,267 @@ function snapbackWindow(id) {
   updateWindow(id, { mode: 'snapped', z: ++nextZ })
 }
 
+const nodes = reactive([])
+const childrenOf = reactive({})
+let h5NextId = 1
+
+const activeId = ref(null)
+const fabOpen = ref(false)
+
+const rootNodes = computed(() => nodes.filter((n) => n.parentId === null))
+const activeNode = computed(() => nodes.find((n) => n.id === activeId.value))
+
+function buildTree(node) {
+  const children = (childrenOf[node.id] || [])
+    .map((cid) => nodes.find((n) => n.id === cid))
+    .filter(Boolean)
+  return { ...node, children: children.map(buildTree) }
+}
+
+const tree = computed(() => rootNodes.value.map(buildTree))
+
+const inputUrl = ref('')
+const inputTitle = ref('')
+const pendingParentId = ref(null)
+const showAddDialog = ref(false)
+
+function normalizeUrl(raw) {
+  let url = (raw || '').trim()
+  if (!url) return ''
+  if (!/^https?:\/\//i.test(url)) url = 'https://' + url
+  return url
+}
+
+function deriveTitle(url) {
+  try {
+    const u = new URL(url)
+    return u.hostname.replace(/^www\./, '').slice(0, 30)
+  } catch (_) {
+    return url.slice(0, 30)
+  }
+}
+
+function selectNode(id) {
+  if (!nodes.find((n) => n.id === id)) return
+  activeId.value = id
+  fabOpen.value = false
+}
+
+function openAddDialog(parentId) {
+  pendingParentId.value = parentId
+  inputUrl.value = ''
+  inputTitle.value = ''
+  showAddDialog.value = true
+}
+
+function closeAddDialog() {
+  showAddDialog.value = false
+  inputUrl.value = ''
+  inputTitle.value = ''
+  pendingParentId.value = null
+}
+
+function confirmAdd() {
+  const url = normalizeUrl(inputUrl.value)
+  if (!url) return
+  const parentId = pendingParentId.value
+  const title = (inputTitle.value.trim() || deriveTitle(url))
+  if (parentId === null) {
+    const existingRoot = nodes.find((n) => n.parentId === null)
+    if (existingRoot) {
+      existingRoot.url = url
+      existingRoot.title = title
+      activeId.value = existingRoot.id
+    } else {
+      const id = h5NextId++
+      nodes.push({ id, parentId: null, url, title })
+      activeId.value = id
+    }
+  } else {
+    const id = h5NextId++
+    nodes.push({ id, parentId, url, title })
+    if (!childrenOf[parentId]) childrenOf[parentId] = []
+    childrenOf[parentId].push(id)
+    activeId.value = id
+  }
+  fabOpen.value = false
+  closeAddDialog()
+}
+
+function removeNode(id) {
+  const toDelete = []
+  function collect(cid) {
+    toDelete.push(cid)
+    for (const childId of childrenOf[cid] || []) collect(childId)
+  }
+  collect(id)
+  for (const delId of toDelete) {
+    const i = nodes.findIndex((n) => n.id === delId)
+    if (i !== -1) nodes.splice(i, 1)
+    delete childrenOf[delId]
+    for (const k in childrenOf) {
+      const arr = childrenOf[k]
+      const j = arr.indexOf(delId)
+      if (j !== -1) arr.splice(j, 1)
+    }
+  }
+  activeId.value = nodes.length ? nodes[0].id : null
+}
+
 onMounted(() => {
+  updateBreakpoint()
+  window.addEventListener('resize', updateBreakpoint)
+
   if (localStorage.getItem('cw_leftUrl')) {
     leftUrl.value = localStorage.getItem('cw_leftUrl')
     showPlaceholder.value = false
     leftKey.value++
   }
+
+  const saved = localStorage.getItem('cw_nodes')
+  if (saved) {
+    try {
+      const data = JSON.parse(saved)
+      data.nodes?.forEach((n) => {
+        nodes.push(n)
+        if (n.id >= h5NextId) h5NextId = n.id + 1
+      })
+      for (const k in data.childrenOf || {}) {
+        childrenOf[k] = data.childrenOf[k]
+      }
+      activeId.value = data.activeId ?? (nodes[0]?.id ?? null)
+    } catch (_) {}
+  }
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', updateBreakpoint)
 })
 
 watch(leftUrl, (v) => {
   if (v) localStorage.setItem('cw_leftUrl', v)
 })
+
+watch(
+  [nodes, childrenOf, activeId],
+  () => {
+    localStorage.setItem(
+      'cw_nodes',
+      JSON.stringify({
+        nodes: nodes.map((n) => ({ ...n })),
+        childrenOf: { ...childrenOf },
+        activeId: activeId.value
+      })
+    )
+  },
+  { deep: true }
+)
 </script>
 
 <template>
   <div class="app-shell">
-    <MainWindow
-      class="main"
-      :url="leftUrl"
-      :input="leftInput"
-      :placeholder-shown="showPlaceholder"
-      :iframe-key="leftKey"
-      @update:input="(v) => (leftInput = v)"
-      @load="loadLeft"
-      @clear="clearLeft"
-    />
-
-    <div class="divider" @pointerdown="startDivider">
-      <div class="handle"></div>
-    </div>
-
-    <div class="right-zone" :style="{ flex: '0 0 ' + rightPercent }">
-      <RightPanel
-        :presets="PRESETS"
-        :windows="windows"
-        @add="addWindow"
-        @focus="focusWindow"
-        @close="removeWindow"
-        @start-drag="startSnappedDrag"
-        @snapback="snapbackWindow"
+    <template v-if="!isMobile">
+      <MainWindow
+        class="main"
+        :url="leftUrl"
+        :input="leftInput"
+        :placeholder-shown="showPlaceholder"
+        :iframe-key="leftKey"
+        @update:input="(v) => (leftInput = v)"
+        @load="loadLeft"
+        @clear="clearLeft"
       />
-    </div>
 
-    <div class="floating-layer">
-      <EmbeddedWindow
-        v-for="w in windows.filter((x) => x.mode === 'floating')"
-        :key="w.id"
-        :model="w"
-        :app-rect-provider="() => document.querySelector('.app-shell').getBoundingClientRect()"
-        @focus="focusWindow(w.id)"
-        @close="removeWindow(w.id)"
-        @update="(patch) => updateWindow(w.id, patch)"
-        @snapback="snapbackWindow(w.id)"
+      <div class="divider" @pointerdown="startDivider">
+        <div class="handle"></div>
+      </div>
+
+      <div class="right-zone" :style="{ flex: '0 0 ' + rightPercent }">
+        <RightPanel
+          :presets="PRESETS"
+          :windows="windows"
+          @add="addWindow"
+          @focus="focusWindow"
+          @close="removeWindow"
+          @start-drag="startSnappedDrag"
+          @snapback="snapbackWindow"
+        />
+      </div>
+
+      <div class="floating-layer">
+        <EmbeddedWindow
+          v-for="w in windows.filter((x) => x.mode === 'floating')"
+          :key="w.id"
+          :model="w"
+          :app-rect-provider="() => document.querySelector('.app-shell').getBoundingClientRect()"
+          @focus="focusWindow(w.id)"
+          @close="removeWindow(w.id)"
+          @update="(patch) => updateWindow(w.id, patch)"
+          @snapback="snapbackWindow(w.id)"
+        />
+      </div>
+    </template>
+
+    <template v-else>
+      <div v-if="!activeNode" class="welcome">
+        <div class="welcome-card">
+          <div class="welcome-title">嵌入看板 · H5</div>
+          <div class="welcome-desc">输入网址打开主网页，右下角悬浮按钮可新建窗口</div>
+          <input
+            class="welcome-input"
+            v-model="inputUrl"
+            placeholder="输入网址，如 https://example.com"
+            @keydown.enter="confirmAdd"
+          />
+          <button class="welcome-btn" @click="confirmAdd" :disabled="!inputUrl.trim()">打开</button>
+        </div>
+      </div>
+
+      <iframe
+        v-else
+        :key="activeNode.id"
+        :src="activeNode.url"
+        class="main-frame"
+        frameborder="0"
+        allow="fullscreen"
+        sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads"
+        referrerpolicy="no-referrer"
+      ></iframe>
+
+      <FabTree
+        :tree="tree[0] || {}"
+        :active-id="activeId"
+        :open="fabOpen"
+        @toggle="fabOpen = !fabOpen"
+        @select="selectNode"
+        @add-root="openAddDialog(null)"
+        @add-child="(pid) => openAddDialog(pid)"
+        @close="removeNode"
       />
+    </template>
+
+    <div v-if="showAddDialog" class="dialog-mask" @click="closeAddDialog">
+      <div class="dialog" @click.stop>
+        <div class="dialog-title">
+          {{ pendingParentId === null ? '新建主窗口' : '新建子窗口' }}
+        </div>
+        <input
+          class="dialog-input"
+          v-model="inputTitle"
+          placeholder="标题（可选，留空用网址）"
+        />
+        <input
+          class="dialog-input"
+          v-model="inputUrl"
+          placeholder="https://..."
+          autofocus
+          @keydown.enter="confirmAdd"
+        />
+        <div class="dialog-actions">
+          <button class="cancel" @click="closeAddDialog">取消</button>
+          <button class="ok" @click="confirmAdd" :disabled="!inputUrl.trim()">打开</button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -286,5 +503,154 @@ watch(leftUrl, (v) => {
 
 .floating-layer > * {
   pointer-events: auto;
+}
+
+.welcome {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #f5f7fa 0%, #e9eef5 100%);
+  padding: 20px;
+}
+
+.welcome-card {
+  width: 100%;
+  max-width: 420px;
+  background: #fff;
+  border-radius: 16px;
+  padding: 28px 22px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+  text-align: center;
+}
+
+.welcome-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1f2329;
+  margin-bottom: 8px;
+}
+
+.welcome-desc {
+  font-size: 13px;
+  color: #8a9099;
+  margin-bottom: 20px;
+  line-height: 1.6;
+}
+
+.welcome-input {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid #d8dce2;
+  border-radius: 10px;
+  font-size: 15px;
+  outline: none;
+  box-sizing: border-box;
+  margin-bottom: 12px;
+}
+
+.welcome-input:focus {
+  border-color: #3b82f6;
+}
+
+.welcome-btn {
+  width: 100%;
+  height: 44px;
+  border: 0;
+  border-radius: 10px;
+  background: #3b82f6;
+  color: #fff;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.welcome-btn:active {
+  background: #2f6fe0;
+}
+
+.main-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+
+.dialog-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.dialog {
+  width: 100%;
+  max-width: 380px;
+  background: #fff;
+  border-radius: 14px;
+  padding: 18px 16px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.2);
+}
+
+.dialog-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2329;
+  margin-bottom: 14px;
+}
+
+.dialog-input {
+  width: 100%;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid #d8dce2;
+  border-radius: 8px;
+  font-size: 15px;
+  outline: none;
+  box-sizing: border-box;
+  margin-bottom: 14px;
+}
+
+.dialog-input:focus {
+  border-color: #3b82f6;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.dialog-actions button {
+  flex: 1;
+  height: 42px;
+  border: 0;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.cancel {
+  background: #f0f1f3;
+  color: #4b5159;
+}
+
+.ok {
+  background: #3b82f6;
+  color: #fff;
+}
+
+.ok:disabled {
+  background: #c5c8ce;
+}
+
+.ok:not(:disabled):active {
+  background: #2f6fe0;
 }
 </style>

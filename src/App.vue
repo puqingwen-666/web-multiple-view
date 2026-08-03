@@ -6,6 +6,7 @@ import EmbeddedWindow from './components/EmbeddedWindow.vue'
 import FabTree from './components/FabTree.vue'
 
 const MOBILE_BREAKPOINT = 768
+const MAX_NODES = 15
 
 const isMobile = ref(false)
 
@@ -249,11 +250,19 @@ function confirmAdd() {
       existingRoot.title = title
       activeId.value = existingRoot.id
     } else {
+      if (nodes.length >= MAX_NODES) {
+        alert(`最多只能打开 ${MAX_NODES} 个窗口`)
+        return
+      }
       const id = h5NextId++
       nodes.push({ id, parentId: null, url, title })
       activeId.value = id
     }
   } else {
+    if (nodes.length >= MAX_NODES) {
+      alert(`最多只能打开 ${MAX_NODES} 个窗口`)
+      return
+    }
     const id = h5NextId++
     nodes.push({ id, parentId, url, title })
     if (!childrenOf[parentId]) childrenOf[parentId] = []
@@ -379,7 +388,7 @@ watch(
     </template>
 
     <template v-else>
-      <div v-if="!activeNode" class="welcome">
+      <div v-if="!activeNode && nodes.length === 0" class="welcome">
         <div class="welcome-card">
           <div class="welcome-title">嵌入看板 · H5</div>
           <div class="welcome-desc">输入网址打开主网页，右下角悬浮按钮可新建窗口</div>
@@ -393,16 +402,19 @@ watch(
         </div>
       </div>
 
-      <iframe
-        v-else
-        :key="activeNode.id"
-        :src="activeNode.url"
-        class="main-frame"
-        frameborder="0"
-        allow="fullscreen"
-        sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads"
-        referrerpolicy="no-referrer"
-      ></iframe>
+      <div v-else class="frames-stack">
+        <iframe
+          v-for="node in nodes"
+          :key="node.id"
+          :src="node.url"
+          class="main-frame"
+          :class="{ hidden: node.id !== activeId }"
+          frameborder="0"
+          allow="fullscreen"
+          sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads"
+          referrerpolicy="no-referrer"
+        ></iframe>
+      </div>
 
       <FabTree
         :tree="tree[0] || {}"
@@ -577,6 +589,16 @@ watch(
   height: 100%;
   border: 0;
   display: block;
+}
+
+.main-frame.hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.frames-stack {
+  position: absolute;
+  inset: 0;
 }
 
 .dialog-mask {

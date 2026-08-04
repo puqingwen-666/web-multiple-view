@@ -3,7 +3,8 @@ import { ref, computed } from 'vue'
 
 const props = defineProps({
   presets: { type: Array, default: () => [] },
-  windows: { type: Array, default: () => [] }
+  windows: { type: Array, default: () => [] },
+  history: { type: Array, default: () => [] }
 })
 
 const emit = defineEmits(['add', 'focus', 'close', 'start-drag', 'snapback'])
@@ -11,6 +12,7 @@ const emit = defineEmits(['add', 'focus', 'close', 'start-drag', 'snapback'])
 const showForm = ref(false)
 const customUrl = ref('')
 const customTitle = ref('')
+const urlFocused = ref(false)
 
 const snappedWindows = computed(() => props.windows.filter((w) => w.mode === 'snapped'))
 
@@ -26,6 +28,13 @@ function addCustom() {
   customUrl.value = ''
   customTitle.value = ''
   showForm.value = false
+  urlFocused.value = false
+}
+
+function pickHistory(url) {
+  customUrl.value = url
+  urlFocused.value = false
+  addCustom()
 }
 
 function onItemContext(e, w) {
@@ -62,11 +71,23 @@ function startDrag(e, w) {
         placeholder="标题（可选）"
         @keydown.enter="addCustom"
       />
-      <input
-        v-model="customUrl"
-        placeholder="网址 https://…"
-        @keydown.enter="addCustom"
-      />
+      <div class="url-wrap">
+        <input
+          v-model="customUrl"
+          placeholder="网址 https://…"
+          @keydown.enter="addCustom"
+          @focus="urlFocused = true"
+          @blur="urlFocused = false"
+        />
+        <ul v-if="urlFocused && history.length" class="history-list">
+          <li
+            v-for="item in history"
+            :key="item"
+            @mousedown.prevent="pickHistory(item)"
+            :title="item"
+          >{{ item }}</li>
+        </ul>
+      </div>
       <div class="form-actions">
         <button class="primary" @click="addCustom">添加</button>
         <button @click="showForm = false">取消</button>
@@ -189,6 +210,58 @@ function startDrag(e, w) {
 .form-actions {
   display: flex;
   gap: 6px;
+}
+
+.url-wrap {
+  position: relative;
+}
+
+.url-wrap input {
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid #d8dce2;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.url-wrap input:focus {
+  border-color: #3b82f6;
+}
+
+.history-list {
+  position: absolute;
+  top: 32px;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  background: #fff;
+  border: 1px solid #d8dce2;
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.history-list li {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #4b5159;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-list li:hover {
+  background: #eef4ff;
+  color: #2f6fe0;
 }
 
 .form-actions button {

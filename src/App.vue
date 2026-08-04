@@ -29,6 +29,32 @@ const leftKey = ref(0)
 const leftRatio = ref(0.7)
 const showPlaceholder = ref(true)
 
+const urlHistory = ref([])
+const HIST_MAX = 10
+const HIST_KEY = 'cw_url_history'
+
+function loadHistory() {
+  try {
+    const saved = localStorage.getItem(HIST_KEY)
+    if (saved) urlHistory.value = JSON.parse(saved) || []
+  } catch (_) {}
+}
+
+function pushHistory(url) {
+  if (!url) return
+  const list = urlHistory.value.filter((u) => u !== url)
+  list.unshift(url)
+  if (list.length > HIST_MAX) list.length = HIST_MAX
+  urlHistory.value = list
+  localStorage.setItem(HIST_KEY, JSON.stringify(list))
+}
+
+function pickHistory(url) {
+  leftInput.value = url
+  loadLeft()
+  pushHistory(url)
+}
+
 const windows = reactive([])
 let nextId = 1
 let nextZ = 100
@@ -43,6 +69,7 @@ function loadLeft() {
   leftUrl.value = url
   showPlaceholder.value = false
   leftKey.value++
+  pushHistory(url)
 }
 
 function clearLeft() {
@@ -87,6 +114,7 @@ function addWindow({ title, url }) {
     height: 240,
     z: ++nextZ
   })
+  pushHistory(url)
 }
 
 function removeWindow(id) {
@@ -201,6 +229,15 @@ const inputUrl = ref('')
 const inputTitle = ref('')
 const pendingParentId = ref(null)
 const showAddDialog = ref(false)
+const welcomeFocused = ref(false)
+const dialogFocused = ref(false)
+
+function pickFromHistory(url) {
+  inputUrl.value = url
+  welcomeFocused.value = false
+  dialogFocused.value = false
+  confirmAdd()
+}
 
 function normalizeUrl(raw) {
   let url = (raw || '').trim()
@@ -269,6 +306,7 @@ function confirmAdd() {
     childrenOf[parentId].push(id)
     activeId.value = id
   }
+  pushHistory(url)
   fabOpen.value = false
   closeAddDialog()
 }
@@ -296,6 +334,7 @@ function removeNode(id) {
 onMounted(() => {
   updateBreakpoint()
   window.addEventListener('resize', updateBreakpoint)
+  loadHistory()
 
   if (localStorage.getItem('cw_leftUrl')) {
     leftUrl.value = localStorage.getItem('cw_leftUrl')
@@ -352,9 +391,11 @@ watch(
         :input="leftInput"
         :placeholder-shown="showPlaceholder"
         :iframe-key="leftKey"
+        :history="urlHistory"
         @update:input="(v) => (leftInput = v)"
         @load="loadLeft"
         @clear="clearLeft"
+        @pick-history="pickHistory"
       />
 
       <div class="divider" @pointerdown="startDivider">
@@ -365,6 +406,7 @@ watch(
         <RightPanel
           :presets="PRESETS"
           :windows="windows"
+          :history="urlHistory"
           @add="addWindow"
           @focus="focusWindow"
           @close="removeWindow"
@@ -392,12 +434,24 @@ watch(
         <div class="welcome-card">
           <div class="welcome-title">嵌入看板 · H5</div>
           <div class="welcome-desc">输入网址打开主网页，右下角悬浮按钮可新建窗口</div>
-          <input
-            class="welcome-input"
-            v-model="inputUrl"
-            placeholder="输入网址，如 https://example.com"
-            @keydown.enter="confirmAdd"
-          />
+          <div class="welcome-input-wrap">
+            <input
+              class="welcome-input"
+              v-model="inputUrl"
+              placeholder="输入网址，如 https://example.com"
+              @keydown.enter="confirmAdd"
+              @focus="welcomeFocused = true"
+              @blur="welcomeFocused = false"
+            />
+            <ul v-if="welcomeFocused && urlHistory.length" class="history-dropdown">
+              <li
+                v-for="item in urlHistory"
+                :key="item"
+                @mousedown.prevent="pickFromHistory(item)"
+                :title="item"
+              >{{ item }}</li>
+            </ul>
+          </div>
           <button class="welcome-btn" @click="confirmAdd" :disabled="!inputUrl.trim()">打开</button>
         </div>
       </div>
@@ -438,13 +492,25 @@ watch(
           v-model="inputTitle"
           placeholder="标题（可选，留空用网址）"
         />
-        <input
-          class="dialog-input"
-          v-model="inputUrl"
-          placeholder="https://..."
-          autofocus
-          @keydown.enter="confirmAdd"
-        />
+        <div class="dialog-input-wrap">
+          <input
+            class="dialog-input"
+            v-model="inputUrl"
+            placeholder="https://..."
+            autofocus
+            @keydown.enter="confirmAdd"
+            @focus="dialogFocused = true"
+            @blur="dialogFocused = false"
+          />
+          <ul v-if="dialogFocused && urlHistory.length" class="history-dropdown">
+            <li
+              v-for="item in urlHistory"
+              :key="item"
+              @mousedown.prevent="pickFromHistory(item)"
+              :title="item"
+            >{{ item }}</li>
+          </ul>
+        </div>
         <div class="dialog-actions">
           <button class="cancel" @click="closeAddDialog">取消</button>
           <button class="ok" @click="confirmAdd" :disabled="!inputUrl.trim()">打开</button>
@@ -515,6 +581,51 @@ watch(
 
 .floating-layer > * {
   pointer-events: auto;
+}
+
+.welcome-input-wrap,
+.dialog-input-wrap {
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.dialog-input-wrap {
+  margin-bottom: 14px;
+}
+
+.history-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 4px 0;
+  background: #fff;
+  border: 1px solid #d8dce2;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  max-height: 240px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.history-dropdown li {
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #4b5159;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-dropdown li:hover,
+.history-dropdown li:active {
+  background: #eef4ff;
+  color: #2f6fe0;
 }
 
 .welcome {

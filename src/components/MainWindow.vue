@@ -1,26 +1,54 @@
 <script setup>
+import { ref } from 'vue'
+
 const props = defineProps({
   url: { type: String, default: '' },
   input: { type: String, default: '' },
   placeholderShown: { type: Boolean, default: true },
-  iframeKey: { type: Number, default: 0 }
+  iframeKey: { type: Number, default: 0 },
+  history: { type: Array, default: () => [] }
 })
 
-const emit = defineEmits(['update:input', 'load', 'clear'])
+const emit = defineEmits(['update:input', 'load', 'clear', 'pick-history'])
+
+const focused = ref(false)
+
+function onFocus() {
+  focused.value = true
+}
+function onBlur() {
+  setTimeout(() => { focused.value = false }, 200)
+}
+function pick(url) {
+  emit('pick-history', url)
+  focused.value = false
+}
 </script>
 
 <template>
   <section class="main-window">
     <header class="header">
       <div class="url-bar">
-        <input
-          class="url-input"
-          :value="input"
-          @input="emit('update:input', $event.target.value)"
-          @keydown.enter="emit('load')"
-          placeholder="输入网址，如 https://example.com"
-          spellcheck="false"
-        />
+        <div class="input-wrap">
+          <input
+            class="url-input"
+            :value="input"
+            @input="emit('update:input', $event.target.value)"
+            @keydown.enter="emit('load')"
+            @focus="onFocus"
+            @blur="onBlur"
+            placeholder="输入网址，如 https://example.com"
+            spellcheck="false"
+          />
+          <ul v-if="focused && history.length" class="history-list">
+            <li
+              v-for="item in history"
+              :key="item"
+              @mousedown.prevent="pick(item)"
+              :title="item"
+            >{{ item }}</li>
+          </ul>
+        </div>
         <button class="btn primary" @click="emit('load')" :disabled="!input">加载</button>
         <button class="btn" @click="emit('clear')" :disabled="!url && !input">清空</button>
       </div>
@@ -69,11 +97,17 @@ const emit = defineEmits(['update:input', 'load', 'clear'])
 .url-bar {
   display: flex;
   gap: 6px;
-  align-items: center;
+  align-items: flex-start;
+}
+
+.input-wrap {
+  flex: 1;
+  position: relative;
+  min-width: 0;
 }
 
 .url-input {
-  flex: 1;
+  width: 100%;
   height: 32px;
   padding: 0 10px;
   border: 1px solid #d8dce2;
@@ -82,10 +116,43 @@ const emit = defineEmits(['update:input', 'load', 'clear'])
   font-family: inherit;
   outline: none;
   background: #fff;
+  box-sizing: border-box;
 }
 
 .url-input:focus {
   border-color: #3b82f6;
+}
+
+.history-list {
+  position: absolute;
+  top: 34px;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  background: #fff;
+  border: 1px solid #d8dce2;
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.history-list li {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: #4b5159;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-list li:hover {
+  background: #eef4ff;
+  color: #2f6fe0;
 }
 
 .btn {
@@ -97,6 +164,7 @@ const emit = defineEmits(['update:input', 'load', 'clear'])
   font-size: 13px;
   cursor: pointer;
   color: #4b5159;
+  flex-shrink: 0;
 }
 
 .btn:disabled {
